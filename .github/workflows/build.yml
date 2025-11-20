@@ -1,0 +1,52 @@
+name: Build ImmortalWrt for SL-3000
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: Compile Firmware
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Set up build environment
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential clang flex bison g++ gawk gcc-multilib \
+            gettext git libncurses-dev libssl-dev python3-distutils rsync unzip zlib1g-dev
+
+      - name: Clone ImmortalWrt source
+        run: |
+          git clone https://github.com/immortalwrt/immortalwrt.git openwrt
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Copy custom config
+        run: |
+          cp .config openwrt/.config
+
+      - name: Download package sources
+        run: |
+          cd openwrt
+          make defconfig
+          make download -j$(nproc) V=s
+
+      - name: Compile firmware
+        run: |
+          cd openwrt
+          make -j$(nproc) V=s
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v3
+        with:
+          name: firmware
+          path: openwrt/bin/targets/
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v3
+        with:
+          name: packages
+          path: openwrt/bin/packages/
