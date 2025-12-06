@@ -1,4 +1,4 @@
-name: SL3000 Ultimate Fix Build v2
+name: SL3000 Ultimate Fix Build v3
 
 on:
   workflow_dispatch:
@@ -11,50 +11,30 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    # ============================
     # ✅ 1. 拉取你的仓库
-    # ============================
     - name: Checkout Your Repo
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
-    # ============================
-    # ✅ 2. 极限磁盘优化（释放 20GB+）
-    # ============================
-    - name: Free Disk Space (Ultimate)
+    # ✅ 2. 磁盘优化
+    - name: Free Disk Space
       run: |
-        sudo rm -rf /usr/share/dotnet \
-                    /usr/local/lib/android \
-                    /opt/ghc \
-                    /opt/hostedtoolcache \
-                    /usr/share/man \
-                    /usr/share/doc \
-                    /usr/share/locale \
-                    /usr/lib/jvm \
-                    /usr/lib/google-cloud-sdk \
-                    /lib/modules/*/kernel/drivers/gpu \
-                    /lib/modules/*/kernel/drivers/sound \
-                    /lib/modules/*/kernel/drivers/media \
-                    /var/lib/apt/lists/*
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
         sudo apt-get clean
         df -h
 
-    # ============================
-    # ✅ 3. 拉取官方 ImmortalWrt（openwrt‑24.10 → Linux 6.6）
-    # ============================
+    # ✅ 3. 拉取官方 ImmortalWrt 24.10 (Linux 6.6)
     - name: Clone Official ImmortalWrt
       run: |
         git clone https://github.com/immortalwrt/immortalwrt.git source
         cd source
         git checkout openwrt-24.10
 
-    # ============================
-    # ✅ 4. 覆盖你的 config / mk / dts / patches
-    # ============================
+    # ✅ 4. 覆盖你的 mk/dts/config/patches
     - name: Apply Your Overlay
       run: |
-        cp configs/*.config source/.config
+        cp configs/sl3000.config source/.config
         mkdir -p source/target/linux/mediatek/dts
         cp dts/*.dts source/target/linux/mediatek/dts/
         mkdir -p source/target/linux/mediatek/image
@@ -63,9 +43,35 @@ jobs:
           cp patches/*.patch source/
         fi
 
-    # ============================
-    # ✅ 5. 安装依赖
-    # ============================
+    # 🔍 5. 检查补丁应用
+    - name: Check Patch Application
+      run: |
+        cd source
+        for p in ../patches/*.patch; do
+          echo "Applying $p ..."
+          patch -p1 < "$p" || true
+        done
+        find . -name "*.rej" > patch_failures.txt
+        if [ -s patch_failures.txt ]; then
+          echo "⚠️ Patch failed, see patch_failures.txt"
+          for rej in $(cat patch_failures.txt); do
+            orig=${rej%.rej}
+            echo "=== Failed patch: $rej ===" >> patch_diff_report.log
+            diff -u "$orig" "$rej" >> patch_diff_report.log || true
+          done
+          exit 1
+        fi
+
+    - name: Upload Patch Failure Report
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: patch-failure-report
+        path: |
+          source/patch_failures.txt
+          source/patch_diff_report.log
+
+    # ✅ 6. 安装依赖
     - name: Install Dependencies
       run: |
         sudo apt update
@@ -73,9 +79,7 @@ jobs:
           gcc-multilib g++-multilib gettext git libncurses5-dev libssl-dev \
           python3 python3-distutils rsync unzip zlib1g-dev file wget ccache
 
-    # ============================
-    # ✅ 6. 缓存 dl
-    # ============================
+    # ✅ 7. 缓存 dl
     - name: Cache DL
       uses: actions/cache@v4
       with:
@@ -83,18 +87,14 @@ jobs:
         key: dl-${{ github.ref_name }}
         restore-keys: dl-
 
-    # ============================
-    # ✅ 7. 缓存 ccache
-    # ============================
+    # ✅ 8. 缓存 ccache
     - name: Cache ccache
       uses: actions/cache@v4
       with:
         path: .ccache
         key: ccache-${{ github.ref_name }}
 
-    # ============================
-    # ✅ 8. 缓存 toolchain + host + target
-    # ============================
+    # ✅ 9. 缓存 toolchain + host + target
     - name: Cache Toolchain + Host + Target
       uses: actions/cache@v4
       with:
@@ -107,39 +107,32 @@ jobs:
         key: toolchain-host-target-${{ github.ref_name }}
         restore-keys: toolchain-host-target-
 
-    # ============================
-    # ✅ 9. feeds
-    # ============================
+    # ✅ 10. feeds
     - name: Update Feeds
       run: |
         cd source
         ./scripts/feeds update -a
         ./scripts/feeds install -a -f
 
-    # ============================
-    # ✅ 10. 单独编译 LLVM（限制线程，避免 OOM）
-    # ============================
+    # ✅ 11. 单独编译 LLVM（限制线程）
     - name: Prebuild LLVM (Fix OOM)
       run: |
         cd source
         export MAKEFLAGS="-j2"
         make tools/llvm-bpf/compile V=s
 
-    # ============================
-    # ✅ 11. 编译 world（自动重试 + fallback）
-    # ============================
+    # ✅ 12. 编译 world（自动重试 + 日志保存）
     - name: Build Firmware (Ultimate Retry)
       run: |
         cd source
         mkdir -p logs
-
         export MAKEFLAGS="-j4"
 
         for i in 1 2 3; do
           echo "=== Build attempt $i ==="
-          timeout 40m make && break
+          timeout 60m make | tee logs/build_$i.log && break
           echo "Parallel build failed, retrying single job..."
-          timeout 40m make -j1 V=s && break
+          timeout 60m make -j1 V=s | tee logs/build_${i}_single.log && break
           echo "Attempt $i failed"
         done
 
@@ -148,20 +141,18 @@ jobs:
           exit 1
         fi
 
-    # ============================
-    # ✅ 12. 检查固件输出
-    # ============================
+    # ✅ 13. 检查固件输出
     - name: Check Firmware Output
       run: |
         TARGET_DIR=source/bin/targets/mediatek/filogic
         echo "=== Firmware output ==="
         ls -lh "$TARGET_DIR"
 
-    # ============================
-    # ✅ 13. 上传构建产物（测试验证）
-    # ============================
+    # ✅ 14. 上传构建产物 + 日志
     - name: Upload Test Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: sl3000-test-output
-        path: source/bin/targets/mediatek/filogic/
+        path: |
+          source/bin/targets/mediatek/filogic/
+          source/logs/
