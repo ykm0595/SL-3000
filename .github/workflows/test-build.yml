@@ -1,0 +1,67 @@
+name: SL3000 Test Build (Overlay Mode)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout Your Repo
+      uses: actions/checkout@v4
+
+    - name: Clone Official ImmortalWrt
+      run: |
+        git clone https://github.com/immortalwrt/immortalwrt.git source
+        cd source
+        git checkout openwrt-24.10
+
+    - name: Apply Your Overlay (config/mk/dts/patches)
+      run: |
+        echo "=== Copying config ==="
+        cp configs/sl3000.config source/.config
+
+        echo "=== Copying DTS ==="
+        mkdir -p source/target/linux/mediatek/dts
+        cp dts/*.dts source/target/linux/mediatek/dts/
+
+        echo "=== Copying image/mk ==="
+        mkdir -p source/target/linux/mediatek/image
+        cp mk/*.mk source/target/linux/mediatek/image/
+
+        echo "=== Applying patches ==="
+        if [ -d patches ]; then
+          cp patches/*.patch source/
+        fi
+
+    - name: Install Dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y build-essential clang flex bison g++ gawk \
+          gcc-multilib g++-multilib gettext git libncurses5-dev libssl-dev \
+          python3 python3-distutils rsync unzip zlib1g-dev file wget ccache
+
+    - name: Update Feeds
+      run: |
+        cd source
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a -f
+
+    - name: Build Firmware
+      run: |
+        cd source
+        make oldconfig
+        timeout 25m make -j$(nproc) || timeout 20m make -j1 V=s
+
+    - name: Check Firmware Output
+      run: |
+        TARGET_DIR=source/bin/targets/mediatek/filogic
+        echo "=== Firmware output ==="
+        ls -lh "$TARGET_DIR"
+
+    - name: Upload Test Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: sl3000-test-output
+        path: source/bin/targets/mediatek/filogic/
