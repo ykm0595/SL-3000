@@ -1,49 +1,51 @@
-/dts-v1/;
+&mmc0 {
+    status = "okay";
+    bus-width = <8>;
+    non-removable;
+    cap-mmc-highspeed;
+    mmc-hs200-1_8v;
 
-#include "mt7981.dtsi"
+    partitions {
+        compatible = "fixed-partitions";
+        #address-cells = <1>;
+        #size-cells = <1>;
 
-/ {
-    model = "Siluo SL3000";
-    compatible = "siluo,sl3000", "mediatek,mt7981";
+        /* 1MB BL2 */
+        partition@0 {
+            label = "bl2";
+            reg = <0x00000000 0x00100000>;
+            read-only;
+        };
 
-    aliases {
-        led-boot = &led_status;
-        led-failsafe = &led_status;
-        led-running = &led_status;
-        led-upgrade = &led_status;
-    };
+        /* 4MB FIP */
+        partition@100000 {
+            label = "fip";
+            reg = <0x00100000 0x00400000>;
+            read-only;
+        };
 
-    chosen {
-        bootargs = "console=ttyS0,115200n8";
-    };
+        /* 64MB kernel */
+        partition@500000 {
+            label = "kernel";
+            reg = <0x00500000 0x04000000>;
+        };
 
-    memory@40000000 {
-        device_type = "memory";
-        reg = <0x40000000 0x20000000>;
-    };
+        /* 256MB rootfs */
+        partition@4500000 {
+            label = "rootfs";
+            reg = <0x04500000 0x10000000>;
+        };
 
-    leds {
-        compatible = "gpio-leds";
+        /* 64MB rootfs_data */
+        partition@14500000 {
+            label = "rootfs_data";
+            reg = <0x14500000 0x04000000>;
+        };
 
-        led_status: status {
-            label = "sl3000:blue:status";
-            gpios = <&gpio 10 GPIO_ACTIVE_LOW>;
+        /* 剩余空间全部给 userdata（Docker / 下载 / 缓存） */
+        partition@18500000 {
+            label = "userdata";
+            reg = <0x18500000 0x7E7B0000>; /* 你可以根据实际 eMMC 大小调整 */
         };
     };
-};
-
-&uart0 {
-    status = "okay";
-};
-
-&eth {
-    status = "okay";
-};
-
-&switch {
-    status = "okay";
-};
-
-&wifi {
-    status = "okay";
 };
